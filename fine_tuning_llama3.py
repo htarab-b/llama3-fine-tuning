@@ -1,9 +1,3 @@
-# Install torch (latest stable version with CUDA support)
-# !pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-
-# Reinstall transformers, trl, and other necessary libraries
-# !pip install -U bitsandbytes transformers accelerate datasets trl sentence-transformers
-
 from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments
 from peft import prepare_model_for_kbit_training, LoraConfig, get_peft_model
 import torch
@@ -19,12 +13,13 @@ tokenizer = AutoTokenizer.from_pretrained(model_name)
 
 # Tokenization function
 def tokenize_function(examples):
+    inputs = [f"### Instruction:\n{prompt}\n\n### Response:\n" for prompt in examples["prompt"]]
     return tokenizer(
-        [inst + "\n" + inp for inst, inp in zip(examples["instruction"], examples["input"])],  # Proper list comprehension
-        text_target=examples["output"],  # Ensure this is also a list
+        inputs,
+        text_target=examples["response"],
         padding="max_length",
         truncation=True,
-        max_length=512,
+        max_length=512
     )
 
 # Tokenize dataset
@@ -43,26 +38,13 @@ model = prepare_model_for_kbit_training(model)
 
 # Apply LoRA configuration
 lora_config = LoraConfig(
-    r=16,  # Rank (adjust as needed)
+    r=16,
     lora_alpha=32,
     lora_dropout=0.05,
-    target_modules=["q_proj", "v_proj"]  # Applies LoRA to key model layers
+    target_modules=["q_proj", "v_proj"]
 )
 
 model = get_peft_model(model, lora_config)
-
-# Tokenization function
-def tokenize_function(examples):
-    return tokenizer(
-        [inst + "\n" + inp for inst, inp in zip(examples["instruction"], examples["input"])],
-        text_target=examples["output"],
-        padding="max_length",
-        truncation=True,
-        max_length=512,
-    )
-
-# Tokenize dataset
-tokenized_datasets = dataset.map(tokenize_function, batched=True)
 
 # Define training arguments
 training_args = TrainingArguments(

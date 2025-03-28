@@ -1,15 +1,11 @@
-# Install dependencies if not installed
-# !pip install -U transformers accelerate bitsandbytes
-# !pip install unsloth  # If you used unsloth for fine-tuning
-
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 import torch
 
 # Load the fine-tuned model
-model_path = "llama3-finetuned"  # Make sure this is the correct path
+model_path = "llama3-finetuned"
 
-# Ensure correct quantization for fine-tuned model
-quantization_config = BitsAndBytesConfig(load_in_4bit=True)  # If trained in 4-bit
+# Load with quantization
+quantization_config = BitsAndBytesConfig(load_in_4bit=True)
 
 model = AutoModelForCausalLM.from_pretrained(
     model_path,
@@ -39,11 +35,11 @@ def generate_response(prompt):
     # Generate output
     output_ids = model.generate(
         **inputs,
-        max_new_tokens=200,  # Controls max length of generated response
-        do_sample=True,  # Enables sampling for more diverse responses
-        temperature=0.7,  # Adjusts randomness (lower = more deterministic)
-        top_p=0.9,  # Nucleus sampling (adjust as needed)
-        eos_token_id=tokenizer.eos_token_id  # Ensures clean stopping
+        max_new_tokens=200,
+        do_sample=True,
+        temperature=0.7,
+        top_p=0.9,
+        eos_token_id=tokenizer.eos_token_id
     )
 
     # Decode response
@@ -55,6 +51,6 @@ def generate_response(prompt):
     return response
 
 # Example usage
-prompt = "What is the fuel tank capacity of the Liebherr LTM 1130-5?"
+prompt = "What is the fuel tank capacity of this machine?"
 response = generate_response(prompt)
 print(response)
