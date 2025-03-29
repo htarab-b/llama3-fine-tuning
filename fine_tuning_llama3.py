@@ -17,7 +17,7 @@ tokenizer = AutoTokenizer.from_pretrained(model_name)
 # Tokenization function
 def tokenize_function(examples):
     return tokenizer(
-        examples["instruction"],  # Use only instruction (since input is empty)
+        examples["prompt"],
         text_target=examples["response"], 
         padding="max_length",
         truncation=True,
