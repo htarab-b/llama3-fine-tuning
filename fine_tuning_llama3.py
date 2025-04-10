@@ -1,72 +1,87 @@
 # Install dependencies (for local system)
 # !pip install -U bitsandbytes transformers accelerate datasets trl sentence-transformers peft torch
+# !pip install unsloth
 
-from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments
-from peft import prepare_model_for_kbit_training, LoraConfig, get_peft_model
-import torch
-from trl import SFTTrainer
+from unsloth import FastLanguageModel, to_sharegpt, standardize_sharegpt, apply_chat_template, is_bfloat16_supported
 from datasets import load_dataset
+from transformers import TrainingArguments
+from trl import SFTTrainer
 
-# Load dataset
-dataset = load_dataset("json", data_files={"train": "train-1.jsonl"})
+# Model config
+max_seq_length = 2048
+dtype = None
+load_in_4bit = True
 
-# Load tokenizer and model
-model_name = "unsloth/llama-3-3b"
-tokenizer = AutoTokenizer.from_pretrained(model_name)
-
-# Tokenization function
-def tokenize_function(examples):
-    return tokenizer(
-        examples["prompt"],
-        text_target=examples["response"], 
-        padding="max_length",
-        truncation=True,
-        max_length=256,  # Adjusted for shorter responses
-    )
-
-# Tokenize dataset
-tokenized_datasets = dataset.map(tokenize_function, batched=True)
-
-# Load model
-model = AutoModelForCausalLM.from_pretrained(
-    model_name,
-    torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
-    device_map="auto"
+# Load model and tokenizer
+model, tokenizer = FastLanguageModel.from_pretrained(
+    model_name = "unsloth/llama-3-8b-bnb-4bit",
+    max_seq_length = max_seq_length,
+    dtype = dtype,
+    load_in_4bit = load_in_4bit,
 )
 
-# Prepare for LoRA fine-tuning
-model = prepare_model_for_kbit_training(model)
-lora_config = LoraConfig(
-    r=16,
-    lora_alpha=32,
-    lora_dropout=0.05,
-    target_modules=["q_proj", "v_proj"]
-)
-model = get_peft_model(model, lora_config)
-
-# Define training arguments
-training_args = TrainingArguments(
-    output_dir="outputs",
-    per_device_train_batch_size=4,  # Increased batch size for smaller model
-    gradient_accumulation_steps=4,
-    learning_rate=2e-4,
-    num_train_epochs=3,
-    save_strategy="epoch",
-    logging_steps=10,
-    bf16=torch.cuda.is_bf16_supported(),  # Enables bf16 if available
-    report_to="none"
+# Apply LoRA
+model = FastLanguageModel.get_peft_model(
+    model,
+    r = 16,
+    target_modules = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+    lora_alpha = 16,
+    lora_dropout = 0,
+    bias = "none",
+    use_gradient_checkpointing = "unsloth",
+    random_state = 3407,
+    use_rslora = False,
+    loftq_config = None,
 )
 
-# Initialize trainer
+# Load datasets
+dataset = load_dataset("json", data_files="train.jsonl", split="train")
+val_dataset = load_dataset("json", data_files="val.jsonl", split="train")
+
+# Preprocess dataset
+dataset = to_sharegpt(dataset, merged_prompt="{instruction}[[\nYour input is:\n{input}]]", output_column_name="output")
+dataset = standardize_sharegpt(dataset)
+
+chat_template = """Below are some instructions that describe some tasks. Write responses that appropriately complete each request.
+
+### Instruction:
+{INPUT}
+
+### Response:
+{OUTPUT}"""
+
+dataset = apply_chat_template(dataset, tokenizer=tokenizer, chat_template=chat_template)
+
+# Training config
 trainer = SFTTrainer(
-    model=model,
-    train_dataset=tokenized_datasets["train"],
-    args=training_args,
+    model = model,
+    tokenizer = tokenizer,
+    train_dataset = dataset,
+    dataset_text_field = "text",
+    max_seq_length = max_seq_length,
+    dataset_num_proc = 2,
+    packing = False,
+    args = TrainingArguments(
+        per_device_train_batch_size = 2,
+        gradient_accumulation_steps = 4,
+        warmup_steps = 5,
+        max_steps = 60,
+        learning_rate = 2e-4,
+        fp16 = not is_bfloat16_supported(),
+        bf16 = is_bfloat16_supported(),
+        logging_steps = 1,
+        optim = "adamw_8bit",
+        weight_decay = 0.01,
+        lr_scheduler_type = "linear",
+        seed = 3407,
+        output_dir = "outputs",
+        report_to = "none",
+    ),
 )
 
-# Train model
-trainer.train()
+# Train
+trainer_stats = trainer.train()
 
-# Save model
-model.save_pretrained("llama3-finetuned")
-tokenizer.save_pretrained("llama3-finetuned")
+# Save model and tokenizer
+model.save_pretrained("fine_tuned-llama3_model")
+tokenizer.save_pretrained("fine_tuned-llama3_model")

@@ -1,56 +1,35 @@
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+from unsloth import FastLanguageModel
+from transformers import TextStreamer, AutoTokenizer, AutoModelForCausalLM
 import torch
 
-# Load the fine-tuned model
-model_path = "llama3-finetuned"
-
-# Load with quantization
-quantization_config = BitsAndBytesConfig(load_in_4bit=True)
-
-model = AutoModelForCausalLM.from_pretrained(
-    model_path,
-    quantization_config=quantization_config,
-    device_map="auto"
+# Load fine-tuned model and tokenizer
+model, tokenizer = FastLanguageModel.from_pretrained(
+    model_name = "fine_tuned-llama3_model",
+    max_seq_length = 2048,
+    dtype = None,
+    load_in_4bit = True,
 )
 
-# Load tokenizer
-tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=True)
+# Enable inference mode
+FastLanguageModel.for_inference(model)
 
-# Ensure model is on the correct device
-device = "cuda" if torch.cuda.is_available() else "cpu"
-model.to(device)
+# Prompt
+messages = [
+    {"role": "user", "content": "When is it necessary to ground a crane?"},
+]
 
-# Define response generation function
-def generate_response(prompt):
-    formatted_prompt = f"### Instruction:\n{prompt}\n\n### Response:\n"
+# Tokenize
+input_ids = tokenizer.apply_chat_template(
+    messages,
+    add_generation_prompt = True,
+    return_tensors = "pt",
+).to("cuda")
 
-    # Tokenize input
-    inputs = tokenizer(
-        formatted_prompt,
-        return_tensors="pt",
-        padding=True,
-        truncation=True,
-    ).to(device)
-
-    # Generate output
-    output_ids = model.generate(
-        **inputs,
-        max_new_tokens=200,
-        do_sample=True,
-        temperature=0.7,
-        top_p=0.9,
-        eos_token_id=tokenizer.eos_token_id
-    )
-
-    # Decode response
-    response = tokenizer.decode(output_ids[0], skip_special_tokens=True)
-
-    # Extract only the assistant's reply
-    response = response.replace(formatted_prompt, "").strip()
-
-    return response
-
-# Example usage
-prompt = "What is the fuel tank capacity of this machine?"
-response = generate_response(prompt)
-print(response)
+# Generate
+text_streamer = TextStreamer(tokenizer, skip_prompt=True)
+_ = model.generate(
+    input_ids,
+    streamer=text_streamer,
+    max_new_tokens=128,
+    pad_token_id=tokenizer.eos_token_id,
+)
